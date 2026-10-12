@@ -26,7 +26,8 @@
     "src",
     "README.md",
     "LICENSE",
-    "usage-bar.schema.json"
+    "usage-bar.schema.json",
+    "tsconfig.json"
   ],
   "dependencies": {
     "@opencode/plugin": "latest"
