@@ -21,9 +21,19 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
 import { createEffect, createMemo, createRoot, For, Show } from "solid-js"
-import { readFileSync } from "node:fs"
+import { appendFileSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+
+const LOG_PATH = join(homedir(), ".local", "share", "opencode", "usage-bar.log")
+
+function log(line: string) {
+  try {
+    appendFileSync(LOG_PATH, `${new Date().toISOString()} ${line}\n`)
+  } catch {
+    // diagnostics are best-effort
+  }
+}
 
 const PLUGIN_ID = "hwcwy.usage-bar"
 const CONFIG_FILE = "usage-bar.jsonc"
@@ -362,6 +372,7 @@ function createUsage(context: Context, config: Config): UsageState {
                 ? await fetchCommandCode(key, controller.signal)
                 : await fetchOpenCodeGo(key, controller.signal)
             setStore("byID", target, next)
+            log(`fetch ${target}: windows=${next.windows.length} plan=${next.plan ?? "-"}`)
           } catch (error) {
             const previous = store.byID[target]
             setStore("byID", target, {
@@ -371,6 +382,7 @@ function createUsage(context: Context, config: Config): UsageState {
               error: error instanceof Error ? error.message : String(error),
               fetchedAt: Date.now(),
             } as ProviderUsage)
+            log(`fetch ${target} failed: ${error instanceof Error ? error.message : String(error)}`)
           } finally {
             inflight.delete(target)
           }
@@ -473,6 +485,13 @@ function FooterBar(props: { usage: UsageState; config: Config }) {
   })
   const error = createMemo(() => usage()?.error)
 
+  let renders = 0
+  createEffect(() => {
+    const provider = providerID() ?? "-"
+    const windows = usage()?.windows.length ?? 0
+    if (renders++ < 10) log(`footer render #${renders}: provider=${provider} windows=${windows} error=${error() ?? "-"}`)
+  })
+
   return (
     <Show when={providerID()}>
       <Show when={usage()?.windows.length}>
@@ -510,6 +529,14 @@ function SidebarBlock(props: { usage: UsageState; config: Config }) {
       usage: props.usage.byID()[id],
     })),
   )
+
+  let renders = 0
+  createEffect(() => {
+    const summary = rows()
+      .map((row) => `${row.id}:${row.usage?.windows.length ?? 0}${row.usage?.error ? `(${row.usage.error})` : ""}`)
+      .join(" ")
+    if (renders++ < 10) log(`sidebar render #${renders}: ${summary}`)
+  })
 
   return (
     <box flexDirection="column">
@@ -550,43 +577,68 @@ function SidebarBlock(props: { usage: UsageState; config: Config }) {
 export default Plugin.define({
   id: PLUGIN_ID,
   setup(context: Context) {
-    const config = loadConfig()
-    const usage = createUsage(context, config)
+    try {
+      log(`setup: app=${context.app.version} location=${context.location?.directory ?? "-"}`)
+      const config = loadConfig()
+      log(
+        `setup: ${PROVIDER_IDS.map((id) => `${id}=${(config.providers[id]?.enabled ?? true) ? "on" : "off"}`).join(" ")} interval=${config.refreshIntervalSeconds}s barWidth=${config.barWidth}`,
+      )
+      for (const id of PROVIDER_IDS) {
+        const key = readCredential(id, config)
+        log(`setup: credential ${id} ${key ? `found(len=${key.length})` : "MISSING"}`)
+      }
+      const usage = createUsage(context, config)
 
-    const footer = context.ui.slot({
-      append: "prompt.footer.status",
-      render: () => <FooterBar usage={usage} config={config} />,
-    })
-    const sidebar = context.ui.slot({
-      append: "sidebar.content",
-      render: () => <SidebarBlock usage={usage} config={config} />,
-    })
+      const footer = context.ui.slot({
+        append: "prompt.footer.status",
+        render: () => <FooterBar usage={usage} config={config} />,
+      })
+      log("setup: footer slot registered (prompt.footer.status)")
+      const sidebar = context.ui.slot({
+        append: "sidebar.content",
+        render: () => <SidebarBlock usage={usage} config={config} />,
+      })
+      log("setup: sidebar slot registered (sidebar.content)")
 
-    context.keymap.layer(() => ({
-      commands: [
-        {
-          id: `${PLUGIN_ID}.refresh`,
-          title: "Refresh usage bar",
-          group: "Usage",
-          palette: true,
-          slash: { name: "usage-bar" },
-          run: async () => {
-            await usage.refresh(undefined, true)
-            context.ui.toast.show({ message: "Usage refreshed", variant: "success" })
+      context.keymap.layer(() => ({
+        commands: [
+          {
+            id: `${PLUGIN_ID}.refresh`,
+            title: "Refresh usage bar",
+            group: "Usage",
+            palette: true,
+            slash: { name: "usage-bar" },
+            run: async () => {
+              await usage.refresh(undefined, true)
+              context.ui.toast.show({ message: "Usage refreshed", variant: "success" })
+            },
           },
-        },
-      ],
-    }))
+        ],
+      }))
 
-    const offCredential = context.data.on("credential.updated", () => {
-      void usage.refresh(undefined, true)
-    })
+      const offCredential = context.data.on("credential.updated", () => {
+        void usage.refresh(undefined, true)
+      })
 
-    return () => {
-      footer()
-      sidebar()
-      offCredential()
-      usage.dispose()
+      void usage.refresh(undefined, true).catch((error) => log(`setup: refresh failed ${String(error)}`))
+      context.ui.toast.show({ message: "Usage bar loaded (CC + Go)", variant: "success" })
+      log("setup: done")
+
+      return () => {
+        footer()
+        sidebar()
+        offCredential()
+        usage.dispose()
+      }
+    } catch (error) {
+      const message = error instanceof Error ? (error.stack ?? error.message) : String(error)
+      log(`setup FAILED: ${message}`)
+      try {
+        context.ui.toast.show({ message: `Usage bar failed: ${message.slice(0, 120)}`, variant: "error" })
+      } catch {
+        // nothing else we can do
+      }
+      return
     }
   },
 })
