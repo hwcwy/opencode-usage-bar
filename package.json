@@ -4,7 +4,7 @@
   "description": "Event-driven usage bar for OpenCode V2: Command Code and OpenCode Go quota windows (5h / weekly / monthly) in the prompt footer and sidebar, refreshing the moment you switch models.",
   "type": "module",
   "exports": {
-    "./tui": "./src/tui.tsx"
+    "./tui": "./dist/tui.js"
   },
   "keywords": [
     "opencode",
@@ -23,12 +23,14 @@
     "url": "git+https://github.com/hwcwy/opencode-usage-bar.git"
   },
   "files": [
-    "src",
+    "dist",
     "README.md",
     "LICENSE",
-    "usage-bar.schema.json",
-    "tsconfig.json"
+    "usage-bar.schema.json"
   ],
+  "scripts": {
+    "build": "bun build ./src/tui.tsx --target=bun --external @opencode/plugin/tui --external solid-js --external @opentui/solid/jsx-runtime --outfile ./dist/tui.js"
+  },
   "dependencies": {
     "@opencode/plugin": "latest"
   },
