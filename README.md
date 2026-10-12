@@ -23,14 +23,21 @@ Usage
 ## 安装
 
 ```bash
-# 本地目录（开发/自用）
-opencode plugin add file:///C:/Users/you/opencode_plugin/opencode-usage-bar
-
-# 或发布后从 npm
-opencode plugin add @hwcwy/opencode-usage-bar
+# GitHub（推荐）
+opencode plugin add github:hwcwy/opencode-usage-bar
 ```
 
-CLI/TUI 插件写入 `~/.config/opencode/cli.json`，**重启 OpenCode TUI 生效**。
+CLI/TUI 插件写入 `~/.config/opencode/cli.json`，**重启 OpenCode TUI 生效**。更新：
+
+```bash
+opencode plugin update github:hwcwy/opencode-usage-bar
+```
+
+本地开发时 `opencode plugin add` 不接受 `file://`，需要手动写进 `cli.json`：
+
+```jsonc
+{ "plugins": ["file:///C:/path/to/opencode-usage-bar"] }
+```
 
 ## 凭据
 
