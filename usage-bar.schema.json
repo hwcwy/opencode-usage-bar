@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "opencode-usage-bar configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "refreshIntervalSeconds": {
+      "type": "number",
+      "minimum": 15,
+      "default": 60,
+      "description": "Background refresh interval. The provider of the selected model is always refreshed immediately."
+    },
+    "barWidth": {
+      "type": "integer",
+      "minimum": 4,
+      "maximum": 40,
+      "default": 10,
+      "description": "Number of blocks in each progress bar."
+    },
+    "warnPercent": { "type": "number", "minimum": 1, "maximum": 100, "default": 70 },
+    "errorPercent": { "type": "number", "minimum": 1, "maximum": 100, "default": 90 },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commandcode": { "$ref": "#/$defs/provider" },
+        "opencode-go": { "$ref": "#/$defs/provider" }
+      }
+    }
+  },
+  "$defs": {
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "label": { "type": "string", "description": "Display name override." },
+        "apiKey": {
+          "type": "string",
+          "description": "Literal API key or {env:NAME} reference. Prefer OpenCode auth discovery."
+        },
+        "authPath": {
+          "type": "string",
+          "description": "Extra auth.json file to read before OpenCode's defaults (supports ~)."
+        }
+      }
+    }
+  }
+}

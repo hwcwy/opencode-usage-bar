@@ -1,0 +1,39 @@
+{
+  "name": "@hwcwy/opencode-usage-bar",
+  "version": "0.1.0",
+  "description": "Event-driven usage bar for OpenCode V2: Command Code and OpenCode Go quota windows (5h / weekly / monthly) in the prompt footer and sidebar, refreshing the moment you switch models.",
+  "type": "module",
+  "exports": {
+    "./tui": "./src/tui.tsx"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-tui",
+    "usage",
+    "quota",
+    "rate-limit",
+    "commandcode",
+    "opencode-go"
+  ],
+  "license": "MIT",
+  "author": "hwcwy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hwcwy/opencode-usage-bar.git"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "usage-bar.schema.json"
+  ],
+  "dependencies": {
+    "@opencode/plugin": "latest"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.8",
+    "@opentui/solid": ">=0.5.8",
+    "solid-js": ">=1.9.0"
+  }
+}
