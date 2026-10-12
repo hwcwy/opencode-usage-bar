@@ -20,7 +20,7 @@
  */
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
-import { createEffect, createMemo, createRoot, For, Show } from "solid-js"
+import { createEffect, createMemo, createRoot, createSignal, For, Show } from "solid-js"
 import { appendFileSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -259,13 +259,22 @@ function limitWindow(limit: unknown, kind: WindowKind, label: string): UsageWind
   }
 }
 
-export async function fetchCommandCode(key: string, signal: AbortSignal): Promise<ProviderUsage> {
+export async function fetchCommandCode(
+  key: string,
+  signal: AbortSignal,
+  publish?: (usage: ProviderUsage) => void,
+): Promise<ProviderUsage> {
   const base = "https://api.commandcode.ai"
   const identity = await getJson(`${base}/alpha/whoami`, key, signal)
   const orgID = (identity?.org ?? {}).id
   const scope = typeof orgID === "string" && orgID.length > 0 ? `orgId=${encodeURIComponent(orgID)}` : ""
 
-  const credits = await getJson(`${base}/alpha/billing/credits${scope ? `?${scope}` : ""}`, key, signal)
+  const [credits, subscription] = await Promise.all([
+    getJson(`${base}/alpha/billing/credits${scope ? `?${scope}` : ""}`, key, signal),
+    getJson(`${base}/alpha/billing/subscriptions${scope ? `?${scope}` : ""}`, key, signal).catch(
+      () => null,
+    ),
+  ])
   const windows: UsageWindow[] = []
   const limits = (credits?.windowLimits ?? {}) as Record<string, unknown>
   const rolling = limitWindow(limits.fiveHour, "rolling", "5h")
@@ -273,21 +282,17 @@ export async function fetchCommandCode(key: string, signal: AbortSignal): Promis
   if (rolling) windows.push(rolling)
   if (weekly) windows.push(weekly)
 
-  let plan: string | undefined
+  const data = subscription?.data ?? {}
+  const plan = typeof data.planId === "string" && data.planId.length > 0 ? data.planId : undefined
+  // Publish the rolling windows as soon as they are known, before the summary round trip.
+  publish?.({ id: "commandcode", windows: [...windows], plan, fetchedAt: Date.now() })
+
   const remaining = Number((credits?.credits ?? {}).monthlyCredits)
   try {
-    const subscription = await getJson(
-      `${base}/alpha/billing/subscriptions${scope ? `?${scope}` : ""}`,
-      key,
-      signal,
-    )
-    const data = subscription?.data ?? {}
-    if (typeof data.planId === "string" && data.planId.length > 0) plan = data.planId
-    const since = data.currentPeriodStart
     const summaryURL =
       `${base}/alpha/usage/summary?` +
       (scope ? `${scope}&` : "") +
-      `since=${encodeURIComponent(String(since ?? ""))}`
+      `since=${encodeURIComponent(String(data.currentPeriodStart ?? ""))}`
     const summary = await getJson(summaryURL, key, signal)
     const spent = Number(summary?.totalCredits ?? summary?.totalCost)
     if (Number.isFinite(spent) && Number.isFinite(remaining) && spent + remaining > 0) {
@@ -300,7 +305,7 @@ export async function fetchCommandCode(key: string, signal: AbortSignal): Promis
       })
     }
   } catch {
-    // subscription/summary are optional; the rolling windows above still render
+    // the summary is optional; the rolling windows above still render
   }
 
   return { id: "commandcode", windows, plan, fetchedAt: Date.now() }
@@ -340,16 +345,30 @@ interface UsageState {
 }
 
 function createUsage(context: Context, config: Config): UsageState {
-  const [store, update] = context.storage.memory<{ byID: Record<string, ProviderUsage | undefined> }>(
-    MEMORY_KEY,
-    { initial: { byID: {} } },
-  )
+  // Durable cache: gives the first paint of the next session real values instead of
+  // "loading". Rendering itself is driven by a local signal so it never depends on
+  // how the host propagates its own storage store.
+  const [persisted, persist] = context.storage.store<{
+    byID: Record<string, ProviderUsage | undefined>
+  }>(MEMORY_KEY, { initial: { byID: {} } })
+  const [byID, setByID] = createSignal<Record<string, ProviderUsage | undefined>>({
+    ...persisted.byID,
+  })
   const inflight = new Map<ProviderID, Promise<void>>()
   const controller = new AbortController()
 
+  const write = (target: ProviderID, value: ProviderUsage) => {
+    setByID((previous) => ({ ...previous, [target]: value }))
+    void persist((draft) => {
+      draft.byID[target] = value
+    }).catch(() => {
+      // persistence is best-effort
+    })
+  }
+
   const enabled = (id: ProviderID) => (config.providers[id]?.enabled ?? true) !== false
   const stale = (id: ProviderID, maxAgeMs: number): boolean => {
-    const current = store.byID[id]
+    const current = byID()[id]
     if (!current) return true
     if (current.error) return true
     return Date.now() - current.fetchedAt > maxAgeMs
@@ -369,23 +388,19 @@ function createUsage(context: Context, config: Config): UsageState {
             if (!key) throw new Error(`missing ${PROVIDER_ENV[target]}`)
             const next =
               target === "commandcode"
-                ? await fetchCommandCode(key, controller.signal)
+                ? await fetchCommandCode(key, controller.signal, (partial) => write(target, partial))
                 : await fetchOpenCodeGo(key, controller.signal)
-            update((draft) => {
-              draft.byID[target] = next
-            })
+            write(target, next)
             log(`fetch ${target}: windows=${next.windows.length} plan=${next.plan ?? "-"}`)
           } catch (error) {
-            const previous = store.byID[target]
-            update((draft) => {
-              draft.byID[target] = {
-                id: target,
-                windows: previous?.windows ?? [],
-                ...(previous?.plan ? { plan: previous.plan } : {}),
-                error: error instanceof Error ? error.message : String(error),
-                fetchedAt: Date.now(),
-              } as ProviderUsage
-            })
+            const previous = byID()[target]
+            write(target, {
+              id: target,
+              windows: previous?.windows ?? [],
+              ...(previous?.plan ? { plan: previous.plan } : {}),
+              error: error instanceof Error ? error.message : String(error),
+              fetchedAt: Date.now(),
+            } as ProviderUsage)
             log(`fetch ${target} failed: ${error instanceof Error ? error.message : String(error)}`)
           } finally {
             inflight.delete(target)
@@ -415,7 +430,7 @@ function createUsage(context: Context, config: Config): UsageState {
   void refresh()
 
   return {
-    byID: () => store.byID,
+    byID,
     refresh,
     dispose: () => {
       clearInterval(timer)

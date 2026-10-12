@@ -1,7 +1,7 @@
 // @bun
 // src/tui.tsx
 import { Plugin, usePlugin } from "@opencode/plugin/tui";
-import { createEffect, createMemo, createRoot, For, Show } from "solid-js";
+import { createEffect, createMemo, createRoot, createSignal, For, Show } from "solid-js";
 import { appendFileSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -184,12 +184,15 @@ function limitWindow(limit, kind, label) {
     resetsAt: toMillis(entry.resetAt)
   };
 }
-async function fetchCommandCode(key, signal) {
+async function fetchCommandCode(key, signal, publish) {
   const base = "https://api.commandcode.ai";
   const identity = await getJson(`${base}/alpha/whoami`, key, signal);
   const orgID = (identity?.org ?? {}).id;
   const scope = typeof orgID === "string" && orgID.length > 0 ? `orgId=${encodeURIComponent(orgID)}` : "";
-  const credits = await getJson(`${base}/alpha/billing/credits${scope ? `?${scope}` : ""}`, key, signal);
+  const [credits, subscription] = await Promise.all([
+    getJson(`${base}/alpha/billing/credits${scope ? `?${scope}` : ""}`, key, signal),
+    getJson(`${base}/alpha/billing/subscriptions${scope ? `?${scope}` : ""}`, key, signal).catch(() => null)
+  ]);
   const windows = [];
   const limits = credits?.windowLimits ?? {};
   const rolling = limitWindow(limits.fiveHour, "rolling", "5h");
@@ -198,15 +201,12 @@ async function fetchCommandCode(key, signal) {
     windows.push(rolling);
   if (weekly)
     windows.push(weekly);
-  let plan;
+  const data = subscription?.data ?? {};
+  const plan = typeof data.planId === "string" && data.planId.length > 0 ? data.planId : undefined;
+  publish?.({ id: "commandcode", windows: [...windows], plan, fetchedAt: Date.now() });
   const remaining = Number((credits?.credits ?? {}).monthlyCredits);
   try {
-    const subscription = await getJson(`${base}/alpha/billing/subscriptions${scope ? `?${scope}` : ""}`, key, signal);
-    const data = subscription?.data ?? {};
-    if (typeof data.planId === "string" && data.planId.length > 0)
-      plan = data.planId;
-    const since = data.currentPeriodStart;
-    const summaryURL = `${base}/alpha/usage/summary?` + (scope ? `${scope}&` : "") + `since=${encodeURIComponent(String(since ?? ""))}`;
+    const summaryURL = `${base}/alpha/usage/summary?` + (scope ? `${scope}&` : "") + `since=${encodeURIComponent(String(data.currentPeriodStart ?? ""))}`;
     const summary = await getJson(summaryURL, key, signal);
     const spent = Number(summary?.totalCredits ?? summary?.totalCost);
     if (Number.isFinite(spent) && Number.isFinite(remaining) && spent + remaining > 0) {
@@ -248,12 +248,21 @@ function isProviderID(value) {
   return value === "commandcode" || value === "opencode-go";
 }
 function createUsage(context, config) {
-  const [store, update] = context.storage.memory(MEMORY_KEY, { initial: { byID: {} } });
+  const [persisted, persist] = context.storage.store(MEMORY_KEY, { initial: { byID: {} } });
+  const [byID, setByID] = createSignal({
+    ...persisted.byID
+  });
   const inflight = new Map;
   const controller = new AbortController;
+  const write = (target, value) => {
+    setByID((previous) => ({ ...previous, [target]: value }));
+    persist((draft) => {
+      draft.byID[target] = value;
+    }).catch(() => {});
+  };
   const enabled = (id) => (config.providers[id]?.enabled ?? true) !== false;
   const stale = (id, maxAgeMs) => {
-    const current = store.byID[id];
+    const current = byID()[id];
     if (!current)
       return true;
     if (current.error)
@@ -275,21 +284,17 @@ function createUsage(context, config) {
           const key = readCredential(target, config);
           if (!key)
             throw new Error(`missing ${PROVIDER_ENV[target]}`);
-          const next = target === "commandcode" ? await fetchCommandCode(key, controller.signal) : await fetchOpenCodeGo(key, controller.signal);
-          update((draft) => {
-            draft.byID[target] = next;
-          });
+          const next = target === "commandcode" ? await fetchCommandCode(key, controller.signal, (partial) => write(target, partial)) : await fetchOpenCodeGo(key, controller.signal);
+          write(target, next);
           log(`fetch ${target}: windows=${next.windows.length} plan=${next.plan ?? "-"}`);
         } catch (error) {
-          const previous = store.byID[target];
-          update((draft) => {
-            draft.byID[target] = {
-              id: target,
-              windows: previous?.windows ?? [],
-              ...previous?.plan ? { plan: previous.plan } : {},
-              error: error instanceof Error ? error.message : String(error),
-              fetchedAt: Date.now()
-            };
+          const previous = byID()[target];
+          write(target, {
+            id: target,
+            windows: previous?.windows ?? [],
+            ...previous?.plan ? { plan: previous.plan } : {},
+            error: error instanceof Error ? error.message : String(error),
+            fetchedAt: Date.now()
           });
           log(`fetch ${target} failed: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
@@ -313,7 +318,7 @@ function createUsage(context, config) {
   const timer = setInterval(() => void refresh(), Math.max(15, config.refreshIntervalSeconds) * 1000);
   refresh();
   return {
-    byID: () => store.byID,
+    byID,
     refresh,
     dispose: () => {
       clearInterval(timer);
