@@ -340,7 +340,7 @@ interface UsageState {
 }
 
 function createUsage(context: Context, config: Config): UsageState {
-  const [store, setStore] = context.storage.memory<{ byID: Record<string, ProviderUsage | undefined> }>(
+  const [store, update] = context.storage.memory<{ byID: Record<string, ProviderUsage | undefined> }>(
     MEMORY_KEY,
     { initial: { byID: {} } },
   )
@@ -371,17 +371,21 @@ function createUsage(context: Context, config: Config): UsageState {
               target === "commandcode"
                 ? await fetchCommandCode(key, controller.signal)
                 : await fetchOpenCodeGo(key, controller.signal)
-            setStore("byID", target, next)
+            update((draft) => {
+              draft.byID[target] = next
+            })
             log(`fetch ${target}: windows=${next.windows.length} plan=${next.plan ?? "-"}`)
           } catch (error) {
             const previous = store.byID[target]
-            setStore("byID", target, {
-              id: target,
-              windows: previous?.windows ?? [],
-              ...(previous?.plan ? { plan: previous.plan } : {}),
-              error: error instanceof Error ? error.message : String(error),
-              fetchedAt: Date.now(),
-            } as ProviderUsage)
+            update((draft) => {
+              draft.byID[target] = {
+                id: target,
+                windows: previous?.windows ?? [],
+                ...(previous?.plan ? { plan: previous.plan } : {}),
+                error: error instanceof Error ? error.message : String(error),
+                fetchedAt: Date.now(),
+              } as ProviderUsage
+            })
             log(`fetch ${target} failed: ${error instanceof Error ? error.message : String(error)}`)
           } finally {
             inflight.delete(target)
@@ -513,7 +517,7 @@ function FooterBar(props: { usage: UsageState; config: Config }) {
       </Show>
       <Show when={!usage()?.windows.length || error()}>
         <text fg={toneColor(context, props.config.errorPercent, props.config)}>
-          {error() ? `${PROVIDER_SHORT[providerID()!]} ${error()}` : ""}
+          {error() ? `${PROVIDER_SHORT[providerID()!]} ${error()}` : `${PROVIDER_SHORT[providerID()!]} loading...`}
         </text>
       </Show>
     </Show>

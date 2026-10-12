@@ -248,7 +248,7 @@ function isProviderID(value) {
   return value === "commandcode" || value === "opencode-go";
 }
 function createUsage(context, config) {
-  const [store, setStore] = context.storage.memory(MEMORY_KEY, { initial: { byID: {} } });
+  const [store, update] = context.storage.memory(MEMORY_KEY, { initial: { byID: {} } });
   const inflight = new Map;
   const controller = new AbortController;
   const enabled = (id) => (config.providers[id]?.enabled ?? true) !== false;
@@ -276,16 +276,20 @@ function createUsage(context, config) {
           if (!key)
             throw new Error(`missing ${PROVIDER_ENV[target]}`);
           const next = target === "commandcode" ? await fetchCommandCode(key, controller.signal) : await fetchOpenCodeGo(key, controller.signal);
-          setStore("byID", target, next);
+          update((draft) => {
+            draft.byID[target] = next;
+          });
           log(`fetch ${target}: windows=${next.windows.length} plan=${next.plan ?? "-"}`);
         } catch (error) {
           const previous = store.byID[target];
-          setStore("byID", target, {
-            id: target,
-            windows: previous?.windows ?? [],
-            ...previous?.plan ? { plan: previous.plan } : {},
-            error: error instanceof Error ? error.message : String(error),
-            fetchedAt: Date.now()
+          update((draft) => {
+            draft.byID[target] = {
+              id: target,
+              windows: previous?.windows ?? [],
+              ...previous?.plan ? { plan: previous.plan } : {},
+              error: error instanceof Error ? error.message : String(error),
+              fetchedAt: Date.now()
+            };
           });
           log(`fetch ${target} failed: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
@@ -406,7 +410,7 @@ function FooterBar(props) {
         when: !usage()?.windows.length || error(),
         children: /* @__PURE__ */ jsx("text", {
           fg: toneColor(context, props.config.errorPercent, props.config),
-          children: error() ? `${PROVIDER_SHORT[providerID()]} ${error()}` : ""
+          children: error() ? `${PROVIDER_SHORT[providerID()]} ${error()}` : `${PROVIDER_SHORT[providerID()]} loading...`
         })
       })
     ]
