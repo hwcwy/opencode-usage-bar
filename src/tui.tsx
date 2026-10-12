@@ -249,7 +249,7 @@ function limitWindow(limit: unknown, kind: WindowKind, label: string): UsageWind
   }
 }
 
-async function fetchCommandCode(key: string, signal: AbortSignal): Promise<ProviderUsage> {
+export async function fetchCommandCode(key: string, signal: AbortSignal): Promise<ProviderUsage> {
   const base = "https://api.commandcode.ai"
   const identity = await getJson(`${base}/alpha/whoami`, key, signal)
   const orgID = (identity?.org ?? {}).id
@@ -296,7 +296,7 @@ async function fetchCommandCode(key: string, signal: AbortSignal): Promise<Provi
   return { id: "commandcode", windows, plan, fetchedAt: Date.now() }
 }
 
-async function fetchOpenCodeGo(key: string, signal: AbortSignal): Promise<ProviderUsage> {
+export async function fetchOpenCodeGo(key: string, signal: AbortSignal): Promise<ProviderUsage> {
   const body = await getJson("https://opencode.ai/zen/go/v1/usage", key, signal)
   const usage = (body?.usage ?? {}) as Record<string, unknown>
   const windows: UsageWindow[] = []
@@ -412,13 +412,13 @@ function createUsage(context: Context, config: Config): UsageState {
 const BAR_FULL = "\u2588"
 const BAR_EMPTY = "\u2591"
 
-function renderBar(percent: number, width: number): string {
+export function renderBar(percent: number, width: number): string {
   const size = Math.max(4, Math.min(40, Math.round(width)))
   const filled = Math.max(0, Math.min(size, Math.round((percent / 100) * size)))
   return BAR_FULL.repeat(filled) + BAR_EMPTY.repeat(size - filled)
 }
 
-function renderCountdown(resetsAt: number | undefined): string {
+export function renderCountdown(resetsAt: number | undefined): string {
   if (!resetsAt || !Number.isFinite(resetsAt)) return ""
   const remaining = resetsAt - Date.now()
   if (remaining <= 0) return "now"
